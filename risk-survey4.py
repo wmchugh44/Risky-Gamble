@@ -1,3 +1,8 @@
+import streamlit as st
+
+st.set_page_config(page_title="Risk Preference Survey", layout="centered")
+
+html_code = """
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -773,3 +778,6 @@
     </script>
 </body>
 </html>
+"""
+
+st.markdown(html_code, unsafe_allow_html=True)
