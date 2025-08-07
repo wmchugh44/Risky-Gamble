@@ -1,0 +1,535 @@
+import streamlit as st
+import streamlit.components.v1 as components
+import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+import json
+import datetime
+
+# Set page config
+st.set_page_config(
+    page_title="Risk Preference Survey",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Hide Streamlit default elements
+hide_st_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# Google Sheets setup function
+@st.cache_resource
+def setup_google_sheets():
+    """Initialize Google Sheets connection"""
+    try:
+        # Load credentials from Streamlit secrets
+        credentials_dict = {
+            "type": st.secrets["gcp_service_account"]["type"],
+            "project_id": st.secrets["gcp_service_account"]["project_id"],
+            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
+            "private_key": st.secrets["gcp_service_account"]["private_key"],
+            "client_email": st.secrets["gcp_service_account"]["client_email"],
+            "client_id": st.secrets["gcp_service_account"]["client_id"],
+            "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
+            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
+            "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
+        }
+        
+        # Define the scope
+        scope = ['https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive']
+        
+        # Create credentials object
+        creds = Credentials.from_service_account_info(credentials_dict, scopes=scope)
+        
+        # Authorize the client
+        client = gspread.authorize(creds)
+        
+        # Open the spreadsheet (you'll need to create this and share it with your service account)
+        sheet = client.open_by_key(st.secrets["google_sheets"]["spreadsheet_id"])
+        worksheet = sheet.worksheet("Survey_Responses")
+        
+        return worksheet
+    except Exception as e:
+        st.error(f"Error connecting to Google Sheets: {e}")
+        return None
+
+def save_to_google_sheets(worksheet, survey_data):
+    """Save survey data to Google Sheets"""
+    try:
+        # Prepare the data row
+        timestamp = datetime.datetime.now().isoformat()
+        
+        # Extract participant info
+        participant_data = survey_data.get('participant', {})
+        name = participant_data.get('name', '')
+        age = participant_data.get('age', '')
+        
+        # Process each result
+        for i, result in enumerate(survey_data.get('results', [])):
+            row = [
+                timestamp,
+                name,
+                age,
+                i + 1,  # Problem number
+                result.get('domain', ''),
+                result.get('prospect', ''),
+                result.get('expectedValue', ''),
+                result.get('certaintyEquivalent', ''),
+                result.get('riskAttitude', '')
+            ]
+            worksheet.append_row(row)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error saving to Google Sheets: {e}")
+        return False
+
+# Initialize Google Sheets connection
+worksheet = setup_google_sheets()
+
+# Title and description
+st.title("📊 Risk Preference Survey")
+st.markdown("### Welcome to the Risk Preference Survey")
+st.markdown("This survey examines how people make decisions involving risk and uncertainty.")
+
+# Survey HTML with modified JavaScript for Streamlit integration
+survey_html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Risk Preference Survey</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .user-info-form {
+            background-color: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .form-group {
+            margin: 15px 0;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        .prospect-display {
+            background-color: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .expected-value {
+            color: #666;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        .choice-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            margin: 10px 0;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            border: 2px solid transparent;
+        }
+        .choice-item.selected {
+            background-color: #e8f4fd;
+            border-color: #007acc;
+        }
+        .choice-item.error {
+            background-color: #ffe6e6;
+            border-color: #ff6b6b;
+        }
+        .choice-text {
+            font-size: 16px;
+        }
+        .choice-buttons {
+            display: flex;
+            gap: 15px;
+        }
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .prefer-prospect {
+            background-color: #007acc;
+            color: white;
+        }
+        .prefer-prospect:hover {
+            background-color: #005999;
+        }
+        .prefer-prospect.selected {
+            background-color: #004080;
+            transform: scale(0.95);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .prefer-sure {
+            background-color: #28a745;
+            color: white;
+        }
+        .prefer-sure:hover {
+            background-color: #1e7e34;
+        }
+        .prefer-sure.selected {
+            background-color: #155724;
+            transform: scale(0.95);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .next-button {
+            background-color: #6c757d;
+            color: white;
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 20px 0;
+        }
+        .next-button:hover {
+            background-color: #545b62;
+        }
+        .next-button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .start-button {
+            background-color: #007acc;
+            color: white;
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 20px 0;
+        }
+        .start-button:hover {
+            background-color: #005999;
+        }
+        .progress {
+            background-color: #e9ecef;
+            height: 10px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            background-color: #007acc;
+            height: 100%;
+            border-radius: 5px;
+            transition: width 0.3s;
+        }
+        .error-message {
+            color: #dc3545;
+            font-weight: bold;
+            text-align: center;
+            margin: 10px 0;
+        }
+        .instructions {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .results {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .phase-indicator {
+            text-align: center;
+            margin: 15px 0;
+            font-weight: bold;
+            color: #007acc;
+        }
+        .domain-indicator {
+            text-align: center;
+            margin: 10px 0;
+            font-size: 14px;
+            color: #666;
+            font-style: italic;
+        }
+        .submit-button {
+            background-color: #28a745;
+            color: white;
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 20px 0;
+        }
+        .submit-button:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">        
+        <div id="userInfoSection">
+            <div class="instructions">
+                <h3>Instructions</h3>
+                <p>You will be presented with a series of decision problems involving risky prospects with known probabilities. For each problem, you will choose between a risky prospect and various sure amounts of money.</p>
+                <p>Please make your choices carefully. The computer will monitor consistency and alert you to any logical errors.</p>
+                <p>Please provide some basic information about yourself before we begin:</p>
+            </div>
+            
+            <div class="user-info-form">
+                <div class="form-group">
+                    <label for="userName">Name:</label>
+                    <input type="text" id="userName" required>
+                </div>
+                <div class="form-group">
+                    <label for="userAge">Age:</label>
+                    <input type="number" id="userAge" min="18" max="120" required>
+                </div>
+                <button class="start-button" onclick="survey.startSurvey()">Start Survey</button>
+            </div>
+        </div>
+        
+        <div id="surveySection" style="display: none;">
+            <div class="progress">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            
+            <div id="problemDisplay"></div>
+        </div>
+        
+        <div class="results" id="results" style="display: none;"></div>
+    </div>
+
+    <script>
+        class ProspectSurvey {
+            constructor() {
+                // All the prospect data (same as before)
+                this.allProspects = {
+                    gains: [
+                        { type: 'risky', outcomes: [0, 50], probabilities: [0.99, 0.01], description: '1% chance to win $50, 99% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 50], probabilities: [0.95, 0.05], description: '5% chance to win $50, 95% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 50], probabilities: [0.90, 0.10], description: '10% chance to win $50, 90% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 50], probabilities: [0.75, 0.25], description: '25% chance to win $50, 75% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 50], probabilities: [0.50, 0.50], description: '50% chance to win $50, 50% chance to win nothing' },
+                        
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.95, 0.05], description: '5% chance to win $100, 95% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.90, 0.10], description: '10% chance to win $100, 90% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.75, 0.25], description: '25% chance to win $100, 75% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.50, 0.50], description: '50% chance to win $100, 50% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.25, 0.75], description: '75% chance to win $100, 25% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.10, 0.90], description: '90% chance to win $100, 10% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.05, 0.95], description: '95% chance to win $100, 5% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 100], probabilities: [0.01, 0.99], description: '99% chance to win $100, 1% chance to win nothing' },
+                        
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.99, 0.01], description: '1% chance to win $200, 99% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.95, 0.05], description: '5% chance to win $200, 95% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.90, 0.10], description: '10% chance to win $200, 90% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.50, 0.50], description: '50% chance to win $200, 50% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.25, 0.75], description: '75% chance to win $200, 25% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.10, 0.90], description: '90% chance to win $200, 10% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.05, 0.95], description: '95% chance to win $200, 5% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 200], probabilities: [0.01, 0.99], description: '99% chance to win $200, 1% chance to win nothing' },
+                        
+                        { type: 'risky', outcomes: [0, 400], probabilities: [0.99, 0.01], description: '1% chance to win $400, 99% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 400], probabilities: [0.95, 0.05], description: '5% chance to win $400, 95% chance to win nothing' },
+                        { type: 'risky', outcomes: [0, 400], probabilities: [0.01, 0.99], description: '99% chance to win $400, 1% chance to win nothing' },
+                        
+                        { type: 'risky', outcomes: [50, 100], probabilities: [0.90, 0.10], description: '10% chance to win $100, 90% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 100], probabilities: [0.50, 0.50], description: '50% chance to win $100, 50% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 100], probabilities: [0.25, 0.75], description: '75% chance to win $100, 25% chance to win $50' },
+                        
+                        { type: 'risky', outcomes: [50, 150], probabilities: [0.95, 0.05], description: '5% chance to win $150, 95% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 150], probabilities: [0.90, 0.10], description: '10% chance to win $150, 90% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 150], probabilities: [0.50, 0.50], description: '50% chance to win $150, 50% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 150], probabilities: [0.25, 0.75], description: '75% chance to win $150, 25% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 150], probabilities: [0.10, 0.90], description: '90% chance to win $150, 10% chance to win $50' },
+                        { type: 'risky', outcomes: [50, 150], probabilities: [0.05, 0.95], description: '95% chance to win $150, 5% chance to win $50' },
+                        
+                        { type: 'risky', outcomes: [100, 200], probabilities: [0.95, 0.05], description: '5% chance to win $200, 95% chance to win $100' },
+                        { type: 'risky', outcomes: [100, 200], probabilities: [0.90, 0.10], description: '10% chance to win $200, 90% chance to win $100' },
+                        { type: 'risky', outcomes: [100, 200], probabilities: [0.50, 0.50], description: '50% chance to win $200, 50% chance to win $100' },
+                        { type: 'risky', outcomes: [100, 200], probabilities: [0.25, 0.75], description: '75% chance to win $200, 25% chance to win $100' },
+                        { type: 'risky', outcomes: [100, 200], probabilities: [0.10, 0.90], description: '90% chance to win $200, 10% chance to win $100' }
+                    ],
+                    losses: [
+                        { type: 'risky', outcomes: [0, -50], probabilities: [0.90, 0.10], description: '10% chance to lose $50, 90% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -50], probabilities: [0.50, 0.50], description: '50% chance to lose $50, 50% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -50], probabilities: [0.10, 0.90], description: '90% chance to lose $50, 10% chance to lose nothing' },
+                        
+                        { type: 'risky', outcomes: [0, -100], probabilities: [0.95, 0.05], description: '5% chance to lose $100, 95% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -100], probabilities: [0.75, 0.25], description: '25% chance to lose $100, 75% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -100], probabilities: [0.50, 0.50], description: '50% chance to lose $100, 50% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -100], probabilities: [0.25, 0.75], description: '75% chance to lose $100, 25% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -100], probabilities: [0.05, 0.95], description: '95% chance to lose $100, 5% chance to lose nothing' },
+                        
+                        { type: 'risky', outcomes: [0, -200], probabilities: [0.99, 0.01], description: '1% chance to lose $200, 99% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -200], probabilities: [0.95, 0.05], description: '5% chance to lose $200, 95% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -200], probabilities: [0.50, 0.50], description: '50% chance to lose $200, 50% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -200], probabilities: [0.10, 0.90], description: '90% chance to lose $200, 10% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -200], probabilities: [0.05, 0.95], description: '95% chance to lose $200, 5% chance to lose nothing' },
+                        
+                        { type: 'risky', outcomes: [0, -400], probabilities: [0.99, 0.01], description: '1% chance to lose $400, 99% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -400], probabilities: [0.95, 0.05], description: '5% chance to lose $400, 95% chance to lose nothing' },
+                        { type: 'risky', outcomes: [0, -400], probabilities: [0.01, 0.99], description: '99% chance to lose $400, 1% chance to lose nothing' },
+                        
+                        { type: 'risky', outcomes: [-50, -100], probabilities: [0.50, 0.50], description: '50% chance to lose $100, 50% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -100], probabilities: [0.25, 0.75], description: '75% chance to lose $100, 25% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -100], probabilities: [0.10, 0.90], description: '90% chance to lose $100, 10% chance to lose $50' },
+                        
+                        { type: 'risky', outcomes: [-50, -150], probabilities: [0.95, 0.05], description: '5% chance to lose $150, 95% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -150], probabilities: [0.90, 0.10], description: '10% chance to lose $150, 90% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -150], probabilities: [0.50, 0.50], description: '50% chance to lose $150, 50% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -150], probabilities: [0.25, 0.75], description: '75% chance to lose $150, 25% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -150], probabilities: [0.10, 0.90], description: '90% chance to lose $150, 10% chance to lose $50' },
+                        { type: 'risky', outcomes: [-50, -150], probabilities: [0.05, 0.95], description: '95% chance to lose $150, 5% chance to lose $50' },
+                        
+                        { type: 'risky', outcomes: [-100, -200], probabilities: [0.95, 0.05], description: '5% chance to lose $200, 95% chance to lose $100' },
+                        { type: 'risky', outcomes: [-100, -200], probabilities: [0.90, 0.10], description: '10% chance to lose $200, 90% chance to lose $100' },
+                        { type: 'risky', outcomes: [-100, -200], probabilities: [0.50, 0.50], description: '50% chance to lose $200, 50% chance to lose $100' },
+                        { type: 'risky', outcomes: [-100, -200], probabilities: [0.25, 0.75], description: '75% chance to lose $200, 25% chance to lose $100' },
+                        { type: 'risky', outcomes: [-100, -200], probabilities: [0.10, 0.90], description: '90% chance to lose $200, 10% chance to lose $100' }
+                    ]
+                };
+                
+                this.userName = '';
+                this.userAge = '';
+                this.prospects = [];
+                this.currentProspectIndex = 0;
+                this.currentPhase = 1;
+                this.choices = [];
+                this.currentChoices = [];
+                this.sureAmounts = [];
+                this.results = [];
+                this.errorMessage = '';
+            }
+            
+            startSurvey() {
+                const name = document.getElementById('userName').value.trim();
+                const age = document.getElementById('userAge').value;
+                
+                if (!name || !age) {
+                    alert('Please fill in both name and age fields.');
+                    return;
+                }
+                
+                this.userName = name;
+                this.userAge = parseInt(age);
+                
+                // Randomly select 5 prospects from each domain
+                const shuffledGains = [...this.allProspects.gains].sort(() => Math.random() - 0.5);
+                const shuffledLosses = [...this.allProspects.losses].sort(() => Math.random() - 0.5);
+                
+                const selectedGains = shuffledGains.slice(0, 5);
+                const selectedLosses = shuffledLosses.slice(0, 5);
+                
+                // Combine and shuffle the order of all 10 prospects
+                this.prospects = [...selectedGains, ...selectedLosses].sort(() => Math.random() - 0.5);
+                
+                // Hide user info section and show survey
+                document.getElementById('userInfoSection').style.display = 'none';
+                document.getElementById('surveySection').style.display = 'block';
+                
+                this.showCurrentProblem();
+            }
+            
+            calculateExpectedValue(prospect) {
+                return prospect.outcomes.reduce((sum, outcome, i) => 
+                    sum + outcome * prospect.probabilities[i], 0);
+            }
+            
+            generateSureAmounts(prospect, phase = 1) {
+                const [min, max] = [Math.min(...prospect.outcomes), Math.max(...prospect.outcomes)];
+                const range = max - min;
+                
+                if (phase === 1) {
+                    // Logarithmically spaced amounts
+                    const amounts = [];
+                    for (let i = 0; i < 7; i++) {
+                        const ratio = Math.pow(10, (i / 6) * Math.log10(range + 1));
+                        amounts.push(Math.round(min + ratio - 1));
+                    }
+                    return amounts.sort((a, b) => b - a); // Descending order
+                } else {
+                    // Phase 2: Linear spacing between bounds
+                    const phase1Choices = this.choices[this.choices.length - 1];
+                    const phase1Amounts = this.generateSureAmounts(prospect, 1);
+                    
+                    let lowestAccepted = null;
+                    let highestRejected = null;
+                    
+                    for (let i = 0; i < phase1Choices.length; i++) {
+                        if (phase1Choices[i] === 'sure') {
+                            if (lowestAccepted === null || phase1Amounts[i] < lowestAccepted) {
+                                lowestAccepted = phase1Amounts[i];
+                            }
+                        } else if (phase1Choices[i] === 'prospect') {
+                            if (highestRejected === null || phase1Amounts[i] > highestRejected) {
+                                highestRejected = phase1Amounts[i];
+                            }
+                        }
+                    }
+                    
+                    let lowerBound, upperBound;
+                    
+                    if (lowestAccepted !== null && highestRejected !== null) {
+                        lowerBound = lowestAccepted - Math.abs(lowestAccepted) * 0.25;
+                        upperBound = highestRejected + Math.abs(highestRejected) * 0.25;
+                    } else if (lowestAccepted !== null) {
+                        lowerBound = lowestAccepted - Math.abs(lowestAccepted) * 0.5;
+                        upperBound = lowestAccepted + Math.abs(lowestAccepted) * 0.25;
+                    } else if (highestRejected !== null) {
+                        lowerBound = highestRejected - Math.abs(highestRejected) * 0.25;
+                        upperBound = highestRejected + Math.abs(highestRejected) * 0.5;
+                    } else {
+                        lowerBound = min;
+                        upperBound = max;
+                    }
+                    
+                    const maxBound = Math.max(lowerBound, upperBound);
+                    const minBound = Math.min(lowerBound, upperBound);
+                    
+                    const amounts = [];
+                    for (let i = 0; i < 7; i++) {
+                        amounts.push(Math.round((maxBound - (i / 6) * (maxBound - minBound)) * 100) / 100);
+                    }
+                    return amounts;
+                }
+            }
+            
+            getDomainType(prospect) {
+                return prospect.outcomes.some(outcome => outcome < 0) ? 'Loss Domain' : 'Gain Domain';
+            }
+            
+            showCurrentProblem() {
+                const prospect
