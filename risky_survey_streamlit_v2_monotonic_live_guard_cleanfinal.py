@@ -3,6 +3,7 @@ import random
 import json
 import io
 from datetime import datetime
+import re
 
 import streamlit as st
 import pandas as pd
@@ -229,11 +230,16 @@ def compute_certainty_equivalent(choices, amounts):
     """
     lowest_accepted = None
     highest_rejected = None
+    
+    # Fix: Iterate through all choices to find the correct highest rejected and lowest accepted
+    # The original logic was flawed - it only considered 'prospect' choices before any 'sure' choice
+    # This misses cases where someone chooses 'prospect' for higher amounts and 'sure' for lower amounts
     for amt, ch in zip(amounts, choices):
         if ch == "sure":
-            lowest_accepted = amt  # amounts are descending, so last 'sure' encountered is the lowest accepted
-        elif ch == "prospect" and lowest_accepted is None:
-            # first block of 'prospect' before any 'sure' captures highest rejected
+            # Track the lowest accepted amount (amounts are descending, so later 'sure' choices are lower)
+            lowest_accepted = amt
+        elif ch == "prospect":
+            # Track the highest rejected amount (this should be the first/highest 'prospect' choice)
             if highest_rejected is None or amt > highest_rejected:
                 highest_rejected = amt
 
@@ -366,10 +372,17 @@ else:
             }
         }
 
+        # Security fix: Properly sanitize user input for filenames
+        # Remove or replace potentially dangerous characters from the name
+        safe_name = re.sub(r'[^\w\s-]', '', st.session_state.name.strip())
+        safe_name = re.sub(r'[-\s]+', '_', safe_name)
+        # Limit length to prevent excessively long filenames
+        safe_name = safe_name[:50] if safe_name else "anonymous"
+
         st.download_button(
             "Download results (JSON)",
             data=export_json_blob(summary),
-            file_name=f"risk_survey_{st.session_state.name.replace(' ', '_')}_{timestamp}.json",
+            file_name=f"risk_survey_{safe_name}_{timestamp}.json",
             mime="application/json",
             use_container_width=True,
         )
@@ -377,7 +390,7 @@ else:
         st.download_button(
             "Download results (CSV)",
             data=export_csv_blob(st.session_state.results, st.session_state.name, st.session_state.age),
-            file_name=f"risk_survey_{st.session_state.name.replace(' ', '_')}_{timestamp}.csv",
+            file_name=f"risk_survey_{safe_name}_{timestamp}.csv",
             mime="text/csv",
             use_container_width=True,
         )
