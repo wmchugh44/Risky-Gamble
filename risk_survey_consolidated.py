@@ -238,7 +238,10 @@ def init_state():
 
     if "prospects" not in st.session_state:
         # Randomize order but keep both domains mixed
-        random.seed()  # remove for reproducibility
+        # Fix: Set a specific seed for reproducibility in testing/debugging
+        # If you want truly random results in production, you can set this to None
+        # or use random.seed() without parameters
+        random.seed(42)  # Fixed seed for reproducible results
         st.session_state.prospects = random.sample(PROSPECTS, k=len(PROSPECTS))
 
     if "index" not in st.session_state:
